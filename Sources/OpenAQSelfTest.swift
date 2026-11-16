@@ -79,6 +79,15 @@ enum OpenAQSelfTest {
         let c10 = OpenAQLogic.candidates(.pm10, in: locs.results, latitude: lat, longitude: lon, now: now)
         check("OpenAQ: PM2.5 candidates skip mobile, nearest first", c25.map(\.locationId) == [20, 10] ? 1 : 0, 1)
         check("OpenAQ: PM10 candidates skip stale station", c10.map(\.locationId) == [10] ? 1 : 0, 1)
+        let mixed = [StationChoice(locationId: 1, sensorId: 11, name: "A", distanceKm: 2),
+                     StationChoice(locationId: 2, sensorId: 21, name: "B", distanceKm: 5)]
+        check("OpenAQ: PM10 prefers the PM2.5 station", OpenAQLogic.preferring(2, mixed).map(\.locationId) == [2, 1] ? 1 : 0, 1)
+        check("OpenAQ: no preference keeps nearest first", OpenAQLogic.preferring(nil, mixed).map(\.locationId) == [1, 2] ? 1 : 0, 1)
+        // A station whose last report is 2 h old (missed the 3 h live window briefly in
+        // OpenAQ's list) stays a candidate; only stations silent for over 24 h are dropped.
+        let laggy = OpenAQLogic.candidates(.pm25, in: locs.results, latitude: lat, longitude: lon,
+                                           now: now.addingTimeInterval(3 * 3600))
+        check("OpenAQ: station silent 4 h stays a candidate", laggy.first?.locationId ?? -1, 20)
         check("OpenAQ: distance from coordinates (1.5 km, x10)", Int(((c25.first?.distanceKm ?? 0) * 10).rounded()), 15)
 
         // Nearest PM2.5 reports -999: it must be rejected and the next station used.

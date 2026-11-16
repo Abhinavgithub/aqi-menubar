@@ -85,6 +85,11 @@ enum Geo {
 
 enum OpenAQLogic {
     static let maxReadingAge: TimeInterval = 3 * 3600
+    /// How recently a station must have reported to stay on the candidate list. Much
+    /// longer than `maxReadingAge` on purpose: OpenAQ's station list can lag behind the
+    /// real data, and a station that misses an hour must not be dropped from the cached
+    /// plan for 12 hours. Every refresh still requires a live reading under 3 hours old.
+    static let maxCandidateSilence: TimeInterval = 24 * 3600
     static let parameterNames: [Pollutant: String] = [.pm25: "pm25", .pm10: "pm10"]
 
     static func isMicrogramsPerCubicMetre(_ units: String) -> Bool {
@@ -107,14 +112,14 @@ enum OpenAQLogic {
     }
 
     /// Fixed (non-mobile) locations with a µg/m³ sensor for the pollutant that reported
-    /// within the last 3 hours, nearest first.
+    /// within the last 24 hours, nearest first.
     static func candidates(_ pollutant: Pollutant, in locations: [OAQLocation],
                            latitude: Double, longitude: Double, now: Date) -> [StationChoice] {
         let wanted = parameterNames[pollutant]!
         var out: [StationChoice] = []
         for loc in locations where loc.isMobile != true {
             guard let last = loc.datetimeLast.flatMap({ parseDate($0.utc) }),
-                  now.timeIntervalSince(last) <= maxReadingAge else { continue }
+                  now.timeIntervalSince(last) <= maxCandidateSilence else { continue }
             guard let sensor = loc.sensors.first(where: {
                 $0.parameter.name.lowercased() == wanted && isMicrogramsPerCubicMetre($0.parameter.units)
             }) else { continue }
@@ -137,6 +142,12 @@ enum OpenAQLogic {
               isValid(l.value), let t = parseDate(l.datetime.utc),
               now.timeIntervalSince(t) <= maxReadingAge else { return nil }
         return StationReading(choice: choice, value: l.value!, time: t)
+    }
+
+    /// The choices at `locationId` first, then the rest, each group nearest first.
+    static func preferring(_ locationId: Int?, _ choices: [StationChoice]) -> [StationChoice] {
+        guard let locationId else { return choices }
+        return choices.filter { $0.locationId == locationId } + choices.filter { $0.locationId != locationId }
     }
 
     /// Hourly slots (period end times, UTC hours) ending at `endSlot`, oldest first.
@@ -202,7 +213,9 @@ enum OpenAQClient {
         return plan
     }
 
-    /// Nearest station reading per pollutant (PM2.5 and PM10 may come from different stations).
+    /// Nearest station reading per pollutant. PM10 comes from the same station as PM2.5
+    /// whenever that station has a live PM10 reading, so both numbers and the hourly strip
+    /// describe the same place.
     static func readings(_ plan: StationPlan, key: String, now: Date) async throws -> (StationReading?, StationReading?) {
         var latestByLocation: [Int: [OAQLatest]] = [:]
         func pick(_ choices: [StationChoice]) async throws -> StationReading? {
@@ -217,7 +230,9 @@ enum OpenAQClient {
             }
             return nil
         }
-        return (try await pick(plan.pm25), try await pick(plan.pm10))
+        let pm25 = try await pick(plan.pm25)
+        let pm10 = try await pick(OpenAQLogic.preferring(pm25?.choice.locationId, plan.pm10))
+        return (pm25, pm10)
     }
 
     static func hours(sensorId: Int, slots: [Date], key: String) async throws -> [OAQHour] {
