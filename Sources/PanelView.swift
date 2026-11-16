@@ -57,7 +57,8 @@ struct PanelContent: View {
                     PollutantTile(name: "PM10", now: s.currentPM10, average: s.avgPM10,
                                   dominant: s.dominant == .pm10, subIndex: IndianAQI.pm10SubIndex)
                 }
-                TrendStrip(points: s.trend, formatter: HourFormatter(utcOffsetSeconds: s.utcOffsetSeconds))
+                TrendStrip(points: s.trend, formatter: HourFormatter(utcOffsetSeconds: s.utcOffsetSeconds),
+                           caption: TrendStrip.caption(for: s.source))
             }
             Divider()
             DataSourceSection(keyStatus: keyStatus, onSave: onSaveKey, onRemove: onRemoveKey)
@@ -240,13 +241,31 @@ private struct PollutantTile: View {
 private struct TrendStrip: View {
     let points: [TrendPoint]
     let formatter: HourFormatter
+    /// Whose hourly history this is. The whole strip is rebuilt from the current
+    /// station on every refresh, so it changes if the station changes.
+    var caption: String? = nil
 
     static let cell: CGFloat = 21
+
+    static func caption(for source: DataSource) -> String {
+        switch source {
+        case let .station(pm25, pm10):
+            let names = [pm25, pm10].compactMap { $0?.choice.name }
+            let unique = names.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+            return "Hourly values from " + unique.joined(separator: " and ")
+        case .model:
+            return "Hourly values from the Open-Meteo model"
+        }
+    }
     static let spacing: CGFloat = 2.3
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Last 12 hours").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            if let caption {
+                Text(caption).font(.system(size: 9)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack(spacing: Self.spacing) {
                 ForEach(Array(points.enumerated()), id: \.offset) { _, p in
                     cell(p)
