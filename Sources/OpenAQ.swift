@@ -150,6 +150,12 @@ enum OpenAQLogic {
         return choices.filter { $0.locationId == locationId } + choices.filter { $0.locationId != locationId }
     }
 
+    /// The nearest `cap` choices, plus any farther ones at `locations`, so PM10 can always
+    /// be read from a station that also supplies PM2.5. Order stays nearest first.
+    static func cappedKeeping(_ choices: [StationChoice], atLocations locations: Set<Int>, cap: Int) -> [StationChoice] {
+        choices.enumerated().filter { $0.offset < cap || locations.contains($0.element.locationId) }.map(\.element)
+    }
+
     /// Hourly slots (period end times, UTC hours) ending at `endSlot`, oldest first.
     static func slots(endingAt endSlot: Date, count: Int) -> [Date] {
         (0..<count).reversed().map { endSlot.addingTimeInterval(-Double($0) * 3600) }
@@ -205,10 +211,11 @@ enum OpenAQClient {
             .init(name: "radius", value: "25000"),
             .init(name: "limit", value: "100"),
         ], key: key)
-        let plan = StationPlan(
-            latitude: latitude, longitude: longitude, searchedAt: now,
-            pm25: Array(OpenAQLogic.candidates(.pm25, in: list.results, latitude: latitude, longitude: longitude, now: now).prefix(4)),
-            pm10: Array(OpenAQLogic.candidates(.pm10, in: list.results, latitude: latitude, longitude: longitude, now: now).prefix(4)))
+        let pm25 = Array(OpenAQLogic.candidates(.pm25, in: list.results, latitude: latitude, longitude: longitude, now: now).prefix(4))
+        let pm10 = OpenAQLogic.cappedKeeping(
+            OpenAQLogic.candidates(.pm10, in: list.results, latitude: latitude, longitude: longitude, now: now),
+            atLocations: Set(pm25.map(\.locationId)), cap: 4)
+        let plan = StationPlan(latitude: latitude, longitude: longitude, searchedAt: now, pm25: pm25, pm10: pm10)
         AppFiles.writeJSON(plan, to: AppFiles.stationPlanURL)
         return plan
     }

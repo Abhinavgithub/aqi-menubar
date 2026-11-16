@@ -83,6 +83,11 @@ enum OpenAQSelfTest {
                      StationChoice(locationId: 2, sensorId: 21, name: "B", distanceKm: 5)]
         check("OpenAQ: PM10 prefers the PM2.5 station", OpenAQLogic.preferring(2, mixed).map(\.locationId) == [2, 1] ? 1 : 0, 1)
         check("OpenAQ: no preference keeps nearest first", OpenAQLogic.preferring(nil, mixed).map(\.locationId) == [1, 2] ? 1 : 0, 1)
+        let five = (1...5).map { StationChoice(locationId: $0, sensorId: $0 * 10, name: "S\($0)", distanceKm: Double($0)) }
+        check("OpenAQ: PM10 list keeps a far PM2.5 station past the cap",
+              OpenAQLogic.cappedKeeping(five, atLocations: [5], cap: 4).map(\.locationId) == [1, 2, 3, 4, 5] ? 1 : 0, 1)
+        check("OpenAQ: PM10 list capped at 4 otherwise",
+              OpenAQLogic.cappedKeeping(five, atLocations: [9], cap: 4).count, 4)
         // A station whose last report is 2 h old (missed the 3 h live window briefly in
         // OpenAQ's list) stays a candidate; only stations silent for over 24 h are dropped.
         let laggy = OpenAQLogic.candidates(.pm25, in: locs.results, latitude: lat, longitude: lon,
